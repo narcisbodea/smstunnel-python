@@ -1,0 +1,109 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smstunnel"
+dynamic = ["version"]
+description = "Python client for SMSTunnel: send texts from your own apps through your own Android phone, from your own number."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Narcis Bodea", email = "contact@narboweb.ro" }]
+keywords = ["sms", "smstunnel", "android", "text message", "verification code", "2fa", "otp"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Topic :: Communications :: Telephony",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+httpx = ["httpx>=0.27"]
+
+[project.urls]
+Homepage = "https://smstunnel.io"
+Documentation = "https://github.com/narcisbodea/smstunnel-python#readme"
+Source = "https://github.com/narcisbodea/smstunnel-python"
+Issues = "https://github.com/narcisbodea/smstunnel-python/issues"
+Changelog = "https://github.com/narcisbodea/smstunnel-python/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "mypy>=1.15",
+    "pytest>=8.3",
+    "ruff>=0.12",
+]
+# Only for the end-to-end tests against a local test server.
+e2e = ["pymongo>=4.10"]
+
+[tool.hatch.version]
+path = "src/smstunnel/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smstunnel"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/CHANGELOG.md",
+    "/README.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = ["e2e: talks to a real SMSTunnel test server (skipped unless SMSTUNNEL_E2E_KEY_FILE is set)"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+# The README aligns its comments on purpose.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "PIE",
+    "PT",  # pytest style
+    "RET",
+    "RUF",
+    "S",   # bandit
+    "SIM",
+    "UP",  # pyupgrade
+    "W",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert, fixed test keys and local servers.
+"tests/**" = ["S101", "S105", "S106", "S310"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+files = ["src", "tests"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["pymongo", "pymongo.*", "bson", "bson.*"]
+ignore_missing_imports = true
