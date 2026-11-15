@@ -95,6 +95,37 @@ def test_a_retry_after_no_answer_sends_the_same_key_and_gets_the_first_answer() 
     assert first.headers["Idempotency-Key"] == retry.headers["Idempotency-Key"] == key
     assert first.body == retry.body
     assert result.message_id == SENT["messageId"]
+    assert result.replayed is True, "the retry sent no new text"
+
+
+@pytest.mark.parametrize(("pick", "path"), SENDS)
+def test_a_first_answer_is_not_replayed(pick: Callable[[Client], Send], path: str) -> None:
+    transport = FakeTransport().respond(200, SENT).respond(200, SENT)
+    send = pick(Client(KEY, transport=transport))
+
+    assert send(TO, TEXT, idempotency_key="order-1042-shipped").replayed is False
+    assert send(TO, TEXT).replayed is False
+    assert transport.last.url == "https://smstunnel.io" + path
+
+
+@pytest.mark.parametrize(
+    ("headers", "replayed"),
+    [
+        pytest.param({"Idempotent-Replayed": "true"}, True, id="true"),
+        pytest.param({"idempotent-replayed": " True "}, True, id="any case and spaces"),
+        pytest.param({"Idempotent-Replayed": "false"}, False, id="false"),
+        pytest.param({"Idempotent-Replayed": ""}, False, id="empty"),
+        pytest.param({}, False, id="none"),
+    ],
+)
+def test_replayed_comes_from_the_idempotent_replayed_header(headers: dict[str, str], replayed: bool) -> None:
+    transport = FakeTransport().respond(200, SENT, headers).respond(200, SENT, headers)
+    client = Client(KEY, transport=transport)
+
+    assert client.send_sms(TO, TEXT, idempotency_key="order-1042-shipped").replayed is replayed
+    assert client.send_verification_code(TO, "Your sign-in code is 482913", idempotency_key="sign-in-77").replayed is (
+        replayed
+    )
 
 
 @pytest.mark.parametrize(
@@ -233,6 +264,15 @@ class TestAsyncClient:
 
         assert asyncio.run(scenario()).message_id == SENT["messageId"]
         assert [request.headers["Idempotency-Key"] for request in transport.sync.requests] == ["order-1042-shipped"] * 2
+
+    def test_a_replayed_answer_is_marked(self) -> None:
+        replayed = response(200, SENT, {"Idempotent-Replayed": "true"})
+        client = AsyncClient(KEY, transport=AsyncFakeTransport(replayed, response(200, SENT), replayed))
+
+        assert asyncio.run(client.send_sms(TO, TEXT, idempotency_key="order-1042-shipped")).replayed is True
+        assert asyncio.run(client.send_sms(TO, TEXT, idempotency_key="order-1043-shipped")).replayed is False
+        sign_in = client.send_verification_code(TO, "Your sign-in code is 482913", idempotency_key="sign-in-77")
+        assert asyncio.run(sign_in).replayed is True
 
     def test_validates_the_key_before_sending(self) -> None:
         transport = AsyncFakeTransport()

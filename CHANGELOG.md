@@ -14,6 +14,9 @@ All notable changes to `smstunnel` are documented here. The format follows
   per text and the same key on every retry of it. A key SMSTunnel can't take (empty, over 255 characters, not
   printable ASCII, spaces at the ends) raises `ValueError`, and one that is not a `str` raises `TypeError`, before
   anything is sent.
+- `SendResult.replayed`: `True` when SMSTunnel answered a repeat of the key with the first answer (the
+  `Idempotent-Replayed: true` header), so your app can tell that the call sent no new text.
+  `SendResult.from_dict()` takes it as the keyword argument `replayed`.
 - `ApiError.retry_after`, moved up from `RateLimitError` (which still has it), so a 409 with `error_code`
   `IDEMPOTENCY_KEY_IN_PROGRESS` (the first try with the same key is still running) says how long to wait too.
 

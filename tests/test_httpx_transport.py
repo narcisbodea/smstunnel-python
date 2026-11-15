@@ -51,6 +51,17 @@ def test_the_idempotency_key_goes_through_httpx() -> None:
     assert seen[0].headers["idempotency-key"] == "sign-in-77"
 
 
+def test_a_replayed_answer_is_marked_through_httpx() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=SENT, headers={"Idempotent-Replayed": "true"})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        result = Client(KEY, transport=HttpxTransport(http)).send_sms("+14155550123", "Hi", idempotency_key="k-1")
+
+    assert result.replayed is True
+    assert result.message_id == "6ae7957285431f6150ce52fc"
+
+
 def test_does_not_follow_redirects_and_maps_errors() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/devices":

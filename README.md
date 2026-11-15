@@ -200,6 +200,7 @@ for attempt in range(3):
 ```
 
 - `send_verification_code()` and the `AsyncClient` methods take `idempotency_key` too.
+- `result.replayed` is `True` when SMSTunnel answered with the first answer (its `Idempotent-Replayed` header): that call sent no new text.
 - The same key with a different text, number, phone or country code gets an `ApiError` with `status_code` 422 and `error_code` `IDEMPOTENCY_KEY_REUSED`, and nothing goes out.
 - A refusal (4xx) means nothing went out: fix the cause, then retry with the same key. A server error (5xx) is kept with the key, because the text may have gone out before it: a retry gets the same error back. Check your dashboard before you send that text again with a new key.
 - A key is 1 to 255 printable ASCII characters, without spaces at the ends. Anything else raises `ValueError` (`TypeError` when it is not a `str`) before anything is sent.

@@ -81,7 +81,8 @@ class Client:
         """
         body = send_body(to, message, device_id, default_country_code)
         request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
-        return SendResult.from_dict(self._call(request))
+        answer, replayed = self._send(request)
+        return SendResult.from_dict(answer, replayed=replayed)
 
     def send_verification_code(
         self,
@@ -104,7 +105,8 @@ class Client:
         """
         body = send_body(to, message, device_id, default_country_code)
         request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
-        return SendResult.from_dict(self._call(request))
+        answer, replayed = self._send(request)
+        return SendResult.from_dict(answer, replayed=replayed)
 
     def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. Needs a key with the ``sms:read`` permission.
@@ -170,3 +172,8 @@ class Client:
 
     def _call(self, request: HttpRequest) -> dict[str, Any]:
         return Core.handle(self._transport.send(request))
+
+    def _send(self, request: HttpRequest) -> tuple[dict[str, Any], bool]:
+        """The answer to a send, and whether SMSTunnel replayed it for its ``Idempotency-Key``."""
+        response = self._transport.send(request)
+        return Core.handle(response), Core.replayed(response)

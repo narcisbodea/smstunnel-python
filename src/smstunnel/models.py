@@ -37,10 +37,14 @@ class SendResult:
     remaining: Mapping[str, int | str] = field(default_factory=dict)
     #: The whole answer.
     raw: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    #: ``True`` when SMSTunnel answered a repeat of the ``idempotency_key`` with the first answer (the
+    #: ``Idempotent-Replayed`` header): this call sent no new text, the first one did.
+    replayed: bool = False
 
     @classmethod
-    def from_dict(cls, body: Mapping[str, Any]) -> SendResult:
-        """From the answer of ``POST /api/v1/sms/send`` or ``/send-2fa``."""
+    def from_dict(cls, body: Mapping[str, Any], *, replayed: bool = False) -> SendResult:
+        """From the answer of ``POST /api/v1/sms/send`` or ``/send-2fa`` (``replayed``: it came with
+        ``Idempotent-Replayed: true``)."""
         data = f.obj(body, "data")
         return cls(
             message_id=f.opt_string(body, "messageId") or f.string(data, "messageId"),
@@ -48,6 +52,7 @@ class SendResult:
             branded=f.boolean(data, "branded"),
             remaining=f.counters(data, "remaining"),
             raw=dict(body),
+            replayed=replayed,
         )
 
 

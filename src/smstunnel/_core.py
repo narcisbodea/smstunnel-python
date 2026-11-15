@@ -93,6 +93,11 @@ class Core:
         return body
 
     @staticmethod
+    def replayed(response: HttpResponse) -> bool:
+        """``True`` when SMSTunnel answered a repeat of an ``Idempotency-Key`` with the first answer: no new text."""
+        return (response.header("idempotent-replayed") or "").strip().lower() == "true"
+
+    @staticmethod
     def data(body: Mapping[str, Any]) -> dict[str, Any]:
         value = body.get("data")
         return dict(value) if isinstance(value, Mapping) else {}

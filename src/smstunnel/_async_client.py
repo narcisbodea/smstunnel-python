@@ -52,7 +52,8 @@ class AsyncClient:
         """Sends one text to one number, from your phone. See :meth:`smstunnel.Client.send_sms`."""
         body = send_body(to, message, device_id, default_country_code)
         request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
-        return SendResult.from_dict(await self._call(request))
+        answer, replayed = await self._send(request)
+        return SendResult.from_dict(answer, replayed=replayed)
 
     async def send_verification_code(
         self,
@@ -66,7 +67,8 @@ class AsyncClient:
         """Sends a sign-in or verification code. See :meth:`smstunnel.Client.send_verification_code`."""
         body = send_body(to, message, device_id, default_country_code)
         request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
-        return SendResult.from_dict(await self._call(request))
+        answer, replayed = await self._send(request)
+        return SendResult.from_dict(answer, replayed=replayed)
 
     async def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. See :meth:`smstunnel.Client.get_message_status`."""
@@ -117,6 +119,11 @@ class AsyncClient:
 
     async def _call(self, request: HttpRequest) -> dict[str, Any]:
         return Core.handle(await self._transport.send(request))
+
+    async def _send(self, request: HttpRequest) -> tuple[dict[str, Any], bool]:
+        """The answer to a send, and whether SMSTunnel replayed it for its ``Idempotency-Key``."""
+        response = await self._transport.send(request)
+        return Core.handle(response), Core.replayed(response)
 
 
 def _default_transport() -> AsyncTransport:
