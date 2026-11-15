@@ -3,10 +3,21 @@ from __future__ import annotations
 import importlib.util
 from datetime import datetime
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal, overload
 
-from ._core import DEFAULT_BASE_URL, DEFAULT_TIMEOUT, Core, received_query, send_body, status_path
-from .models import DeviceList, MessageStatus, ReceivedMessages, SendResult, Usage
+from ._core import (
+    DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
+    Core,
+    received_query,
+    scheduled_answer,
+    scheduled_path,
+    scheduled_query,
+    send_at_value,
+    send_body,
+    status_path,
+)
+from .models import DeviceList, MessageStatus, ReceivedMessages, ScheduledText, ScheduledTexts, SendResult, Usage
 from .transport import AsyncHttpxTransport, AsyncTransport, HttpRequest, ThreadedAsyncTransport
 
 
@@ -40,6 +51,30 @@ class AsyncClient:
     def base_url(self) -> str:
         return self._core.base_url
 
+    @overload
+    async def send_sms(
+        self,
+        to: str,
+        message: str,
+        *,
+        device_id: str | None = ...,
+        default_country_code: str | None = ...,
+        idempotency_key: str | None = ...,
+        send_at: None = ...,
+    ) -> SendResult: ...
+
+    @overload
+    async def send_sms(
+        self,
+        to: str,
+        message: str,
+        *,
+        device_id: str | None = ...,
+        default_country_code: str | None = ...,
+        idempotency_key: str | None = ...,
+        send_at: datetime | str,
+    ) -> ScheduledText: ...
+
     async def send_sms(
         self,
         to: str,
@@ -48,12 +83,18 @@ class AsyncClient:
         device_id: str | None = None,
         default_country_code: str | None = None,
         idempotency_key: str | None = None,
-    ) -> SendResult:
-        """Sends one text to one number, from your phone. See :meth:`smstunnel.Client.send_sms`."""
+        send_at: datetime | str | None = None,
+    ) -> SendResult | ScheduledText:
+        """Sends one text to one number, from your phone: now, or at ``send_at`` (then it returns a
+        :class:`~smstunnel.ScheduledText`). See :meth:`smstunnel.Client.send_sms`."""
         body = send_body(to, message, device_id, default_country_code)
+        if send_at is not None:
+            body["sendAt"] = send_at_value(send_at)
         request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
         answer, replayed = await self._send(request)
-        return SendResult.from_dict(answer, replayed=replayed)
+        if send_at is None:
+            return SendResult.from_dict(answer, replayed=replayed)
+        return ScheduledText.from_dict(scheduled_answer(answer), replayed=replayed)
 
     async def send_verification_code(
         self,
@@ -69,6 +110,27 @@ class AsyncClient:
         request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
         answer, replayed = await self._send(request)
         return SendResult.from_dict(answer, replayed=replayed)
+
+    async def list_scheduled(
+        self,
+        scope: Literal["waiting", "done"] = "waiting",
+        *,
+        page: int = 1,
+        limit: int = 50,
+    ) -> ScheduledTexts:
+        """The texts this API key scheduled. See :meth:`smstunnel.Client.list_scheduled`."""
+        request = self._core.get("/api/v1/sms/scheduled", scheduled_query(scope, page, limit))
+        return ScheduledTexts.from_dict(Core.data(await self._call(request)))
+
+    async def get_scheduled(self, scheduled_id: str) -> ScheduledText:
+        """One text this API key scheduled. See :meth:`smstunnel.Client.get_scheduled`."""
+        request = self._core.get(scheduled_path(scheduled_id))
+        return ScheduledText.from_dict(Core.data(await self._call(request)))
+
+    async def cancel_scheduled(self, scheduled_id: str) -> ScheduledText:
+        """Cancels a text this API key scheduled. See :meth:`smstunnel.Client.cancel_scheduled`."""
+        request = self._core.delete(scheduled_path(scheduled_id))
+        return ScheduledText.from_dict(Core.data(await self._call(request)))
 
     async def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. See :meth:`smstunnel.Client.get_message_status`."""

@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal, overload
 
-from ._core import DEFAULT_BASE_URL, DEFAULT_TIMEOUT, Core, received_query, send_body, status_path
-from .models import DeviceList, MessageStatus, ReceivedMessages, SendResult, Usage
+from ._core import (
+    DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
+    Core,
+    received_query,
+    scheduled_answer,
+    scheduled_path,
+    scheduled_query,
+    send_at_value,
+    send_body,
+    status_path,
+)
+from .models import DeviceList, MessageStatus, ReceivedMessages, ScheduledText, ScheduledTexts, SendResult, Usage
 from .transport import HttpRequest, Transport, UrllibTransport
 
 
@@ -53,6 +64,30 @@ class Client:
     def base_url(self) -> str:
         return self._core.base_url
 
+    @overload
+    def send_sms(
+        self,
+        to: str,
+        message: str,
+        *,
+        device_id: str | None = ...,
+        default_country_code: str | None = ...,
+        idempotency_key: str | None = ...,
+        send_at: None = ...,
+    ) -> SendResult: ...
+
+    @overload
+    def send_sms(
+        self,
+        to: str,
+        message: str,
+        *,
+        device_id: str | None = ...,
+        default_country_code: str | None = ...,
+        idempotency_key: str | None = ...,
+        send_at: datetime | str,
+    ) -> ScheduledText: ...
+
     def send_sms(
         self,
         to: str,
@@ -61,8 +96,9 @@ class Client:
         device_id: str | None = None,
         default_country_code: str | None = None,
         idempotency_key: str | None = None,
-    ) -> SendResult:
-        """Sends one text to one number, from your phone.
+        send_at: datetime | str | None = None,
+    ) -> SendResult | ScheduledText:
+        """Sends one text to one number, from your phone: now, or at ``send_at``.
 
         :param to: the number in international format, e.g. ``+14155550123``.
         :param message: up to 1600 characters (10 joined SMS).
@@ -71,18 +107,29 @@ class Client:
         :param default_country_code: e.g. ``"+40"``: completes numbers given without ``+`` or ``00``.
         :param idempotency_key: makes the call safe to retry. It goes out as the ``Idempotency-Key`` header. For
             24 hours, a repeat of the call with the same key gets the first answer back (the same message id)
-            instead of a second text; the same key with a different text, number, phone or country code is
-            refused (:class:`~smstunnel.ApiError` 422, ``error_code`` ``IDEMPOTENCY_KEY_REUSED``). Use one new key
-            per text and the same key on every retry of it: ``str(uuid.uuid4())``, or your own id such as
-            ``"order-1042-shipped"``. 1 to 255 printable ASCII characters, no spaces at the ends.
-        :raises ValueError: when the number or the text is empty, or the key is not 1 to 255 printable ASCII
-            characters without spaces at the ends.
-        :raises TypeError: when the key is not a ``str``.
+            instead of a second text; the same key with a different text, number, phone, country code or
+            ``send_at`` is refused (:class:`~smstunnel.ApiError` 422, ``error_code`` ``IDEMPOTENCY_KEY_REUSED``).
+            Use one new key per text and the same key on every retry of it: ``str(uuid.uuid4())``, or your own id
+            such as ``"order-1042-shipped"``. 1 to 255 printable ASCII characters, no spaces at the ends.
+        :param send_at: send it at this time instead of now, 1 minute to 30 days ahead: a timezone-aware
+            ``datetime`` (it goes out as its ``isoformat()``, to the second, with its own offset) or an ISO 8601
+            string with an offset, such as ``"2026-11-16T09:00:00+02:00"``. SMSTunnel keeps the text and the call
+            returns a :class:`~smstunnel.ScheduledText` instead of a :class:`~smstunnel.SendResult`. At that time
+            SMSTunnel sends it as if you called ``send_sms()`` then, with this API key: the phone, the country code
+            and the day's allowance are those of that moment.
+        :raises ValueError: when the number or the text is empty, the key is not 1 to 255 printable ASCII
+            characters without spaces at the ends, or ``send_at`` is a naive ``datetime`` or a string without an
+            offset.
+        :raises TypeError: when the key is not a ``str``, or ``send_at`` is not a ``datetime`` or a ``str``.
         """
         body = send_body(to, message, device_id, default_country_code)
+        if send_at is not None:
+            body["sendAt"] = send_at_value(send_at)
         request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
         answer, replayed = self._send(request)
-        return SendResult.from_dict(answer, replayed=replayed)
+        if send_at is None:
+            return SendResult.from_dict(answer, replayed=replayed)
+        return ScheduledText.from_dict(scheduled_answer(answer), replayed=replayed)
 
     def send_verification_code(
         self,
@@ -107,6 +154,46 @@ class Client:
         request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
         answer, replayed = self._send(request)
         return SendResult.from_dict(answer, replayed=replayed)
+
+    def list_scheduled(
+        self,
+        scope: Literal["waiting", "done"] = "waiting",
+        *,
+        page: int = 1,
+        limit: int = 50,
+    ) -> ScheduledTexts:
+        """The texts this API key scheduled with ``send_sms(..., send_at=...)``: not another key's, nor the
+        dashboard's. Needs a key with the ``sms:read`` permission.
+
+        :param scope: ``"waiting"`` (the default): the ones still waiting, soonest first; ``"done"``: the ones that
+            went out, failed or were canceled in the last 30 days, newest first.
+        :param page: from 1.
+        :param limit: texts per page, at most 100.
+        :raises ValueError: when the scope is not ``"waiting"`` or ``"done"``.
+        """
+        request = self._core.get("/api/v1/sms/scheduled", scheduled_query(scope, page, limit))
+        return ScheduledTexts.from_dict(Core.data(self._call(request)))
+
+    def get_scheduled(self, scheduled_id: str) -> ScheduledText:
+        """One text this API key scheduled. Needs a key with the ``sms:read`` permission.
+
+        :param scheduled_id: the :attr:`~smstunnel.ScheduledText.id` that ``send_sms(..., send_at=...)`` returned.
+        :raises ApiError: 404 (``error_code`` ``SCHEDULE_NOT_FOUND``) when this key scheduled no such text.
+        :raises ValueError: when the id is empty.
+        """
+        request = self._core.get(scheduled_path(scheduled_id))
+        return ScheduledText.from_dict(Core.data(self._call(request)))
+
+    def cancel_scheduled(self, scheduled_id: str) -> ScheduledText:
+        """Cancels a text this API key scheduled, while it still waits. Needs a key with the ``sms:send`` permission.
+
+        :returns: the text, now ``canceled``.
+        :raises ApiError: 409 (``error_code`` ``SCHEDULE_NOT_EDITABLE``) when it already went out or was canceled;
+            404 (``SCHEDULE_NOT_FOUND``) when this key scheduled no such text.
+        :raises ValueError: when the id is empty.
+        """
+        request = self._core.delete(scheduled_path(scheduled_id))
+        return ScheduledText.from_dict(Core.data(self._call(request)))
 
     def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. Needs a key with the ``sms:read`` permission.

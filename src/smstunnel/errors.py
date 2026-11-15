@@ -57,7 +57,9 @@ class ApiError(SmsTunnelError):
     ``IDEMPOTENCY_KEY_IN_PROGRESS`` (the first try with this ``idempotency_key`` is still running: try again
     after :attr:`retry_after` seconds to get its answer), 422 with ``error_code`` ``IDEMPOTENCY_KEY_REUSED``
     (this ``idempotency_key`` was already used for a different text; nothing was sent), 5xx (a problem on
-    SMSTunnel's side).
+    SMSTunnel's side). Scheduled texts add the ``SCHEDULE_*`` codes: 400 ``SCHEDULE_TOO_SOON``,
+    ``SCHEDULE_TOO_FAR`` and the like (a text SMSTunnel won't schedule), 404 ``SCHEDULE_NOT_FOUND`` and 409
+    ``SCHEDULE_NOT_EDITABLE`` (it already went out or was canceled).
     """
 
     def __init__(
@@ -114,7 +116,8 @@ class PermissionDeniedError(ApiError):
 
     Either it lacks a permission (``error_code`` is ``PERMISSION_REQUIRED`` and :attr:`permission` names it),
     such as ``sms:read`` for statuses or ``sms:inbox`` for received texts, or the plan does not include the
-    feature.
+    feature. With ``error_code`` ``SCHEDULE_LIMIT_REACHED``, as many scheduled texts are waiting as the plan
+    allows (``body["max"]``): wait until some go out, or cancel one.
     """
 
     @property

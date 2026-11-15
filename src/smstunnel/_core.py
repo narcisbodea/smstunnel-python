@@ -22,6 +22,9 @@ _USER_AGENT = f"smstunnel-python/{__version__} Python/{platform.python_version()
 # What SMSTunnel accepts as an Idempotency-Key (printable ASCII, at most 255), without spaces at the ends: the server
 # trims them, and a key of spaces only would silently mean no key at all.
 _IDEMPOTENCY_KEY = re.compile(r"[\x21-\x7e](?:[\x20-\x7e]{0,253}[\x21-\x7e])?")
+# What SMSTunnel accepts as sendAt: a full ISO 8601 date and time with its offset, at most milliseconds, ASCII digits.
+_SEND_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})", re.ASCII)
+SCHEDULED_SCOPES = ("waiting", "done")
 
 
 class Core:
@@ -55,6 +58,9 @@ class Core:
         headers.update(idempotency_header(idempotency_key))
         payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         return HttpRequest("POST", self.base_url + path, headers, payload, self.timeout)
+
+    def delete(self, path: str) -> HttpRequest:
+        return HttpRequest("DELETE", self.base_url + path, self._headers(json_body=False), None, self.timeout)
 
     def _headers(self, *, json_body: bool) -> dict[str, str]:
         headers = {
@@ -136,6 +142,55 @@ def idempotency_header(key: object) -> dict[str, str]:
             "(a UUID is a good choice)."
         )
     return {"Idempotency-Key": key}
+
+
+def send_at_value(send_at: object) -> str:
+    """``send_at`` as SMSTunnel takes it: a timezone-aware ``datetime`` as its ``isoformat()`` with its own offset, to
+    the second (SMSTunnel takes at most milliseconds); a string as it is, once trimmed.
+
+    :raises ValueError: for a naive ``datetime``, or a string that is not an ISO 8601 date and time with an offset.
+    :raises TypeError: for anything else.
+    """
+    if isinstance(send_at, datetime):
+        if send_at.utcoffset() is None:
+            raise ValueError(
+                "send_at must be timezone-aware: a naive datetime has no time zone, so the moment it means is not "
+                "known (09:00 where?). Give it one, such as "
+                'datetime(2026, 11, 16, 9, 0, tzinfo=ZoneInfo("Europe/Bucharest")) or '
+                "datetime.now(timezone.utc) + timedelta(hours=1)."
+            )
+        return send_at.isoformat(timespec="seconds")
+    if isinstance(send_at, str):
+        text = send_at.strip()
+        if not _SEND_AT.fullmatch(text):
+            raise ValueError(
+                "send_at must be an ISO 8601 date and time with its offset, such as 2026-11-16T09:00:00Z or "
+                f"2026-11-16T11:00:00+02:00, or a timezone-aware datetime (got {send_at!r}). Without an offset, the "
+                "moment to send at is not known."
+            )
+        return text
+    raise TypeError(f"send_at must be a timezone-aware datetime or an ISO 8601 string, not {type(send_at).__name__}.")
+
+
+def scheduled_answer(body: Mapping[str, Any]) -> dict[str, Any]:
+    """The scheduled text of a send with ``sendAt``: ``data``, with the answer's own ``scheduledId`` and ``sendAt``
+    when ``data`` lacks them."""
+    data = Core.data(body)
+    data.setdefault("id", body.get("scheduledId"))
+    data.setdefault("sendAt", body.get("sendAt"))
+    return data
+
+
+def scheduled_query(scope: str, page: int, limit: int) -> dict[str, str]:
+    if scope not in SCHEDULED_SCOPES:
+        raise ValueError(f'Unknown scope {scope!r}. Use "waiting" or "done".')
+    return {"scope": scope, "page": str(int(page)), "limit": str(int(limit))}
+
+
+def scheduled_path(scheduled_id: str) -> str:
+    if not isinstance(scheduled_id, str) or not scheduled_id.strip():
+        raise ValueError("The scheduled text id is empty.")
+    return "/api/v1/sms/scheduled/" + urllib.parse.quote(scheduled_id.strip(), safe="")
 
 
 def status_path(message_id: str) -> str:

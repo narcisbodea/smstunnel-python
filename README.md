@@ -67,6 +67,36 @@ client.send_verification_code("+14155550123", "Your sign-in code is 482913")
 
 The text must contain the code, 4 to 10 digits standing on their own (for example `482913` or `123-456`); SMSTunnel refuses it otherwise. Codes count against a separate quota, and the text can be up to 320 characters.
 
+### Scheduled texts
+
+Give `send_sms()` a `send_at`, 1 minute to 30 days ahead: SMSTunnel keeps the text and hands it to your phone at that time. The call then returns a `smstunnel.ScheduledText` instead of a `SendResult`.
+
+```python
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+text = client.send_sms(
+    "+14155550123",
+    "Reminder: your appointment is tomorrow at 10:30.",
+    send_at=datetime(2026, 11, 16, 9, 0, tzinfo=ZoneInfo("Europe/Bucharest")),
+)
+
+text.id       # keep it to look the text up or cancel it
+text.send_at  # datetime(2026, 11, 16, 7, 0, tzinfo=timezone.utc)
+text.status   # "scheduled", later "sent", "failed" (see text.error) or "canceled"
+
+client.list_scheduled()           # what still waits, soonest first; list_scheduled("done") for the rest
+client.get_scheduled(text.id)     # .message_id once it went out, for get_message_status()
+client.cancel_scheduled(text.id)  # while it still waits
+```
+
+- `send_at` is a timezone-aware `datetime`, sent as its `isoformat()` to the second with its own offset, or an ISO 8601 string with an offset, such as `"2026-11-16T09:00:00+02:00"`. A naive `datetime` raises `ValueError` before anything is sent: without a time zone, 09:00 could be any of 24 moments.
+- At that time SMSTunnel sends the text as if your app called `send_sms()` then, with the same API key: it picks the phone then (unless you named one), and the text counts toward that day's allowance. If the phone is offline, the text waits for it up to 3 days.
+- Plain texts only: sign-in codes can't be scheduled.
+- `idempotency_key` works as for any send. Keep the same `send_at` on every retry: another time with the same key is refused (422).
+- A key lists, reads and cancels only the texts it scheduled. Listing and reading need `sms:read`, cancelling `sms:send`. `AsyncClient` has the same methods.
+- Refusals keep SMSTunnel's code in `error_code`: `ApiError` 400 `SCHEDULE_TOO_SOON` or `SCHEDULE_TOO_FAR` (and the other `SCHEDULE_*` codes), 404 `SCHEDULE_NOT_FOUND`, 409 `SCHEDULE_NOT_EDITABLE` (it already went out or was canceled), and `PermissionDeniedError` 403 `SCHEDULE_LIMIT_REACHED` when as many texts wait as your plan allows (`error.body["max"]`: 10 on Free, 50 Starter, 200 Standard, 500 Professional, 1000 Enterprise). `list_scheduled()` also says how many wait in your account (`.waiting`) and the cap (`.max`).
+
 ### Look up a status
 
 Needs a key with `sms:read`.
@@ -337,6 +367,7 @@ API facts:
 - client.send_sms(to, message, device_id=None, default_country_code=None, idempotency_key=None) calls POST https://smstunnel.io/api/v1/sms/send with the header X-API-Key (and Idempotency-Key when given) and the JSON body {"to", "message", "deviceId"?, "defaultCountryCode"?}. It returns message_id and queued.
 - One recipient per call. To text several people, call it once per number.
 - Retries: the client never retries on its own. idempotency_key (one new key per text, such as str(uuid.uuid4()), the same on every retry of that text) makes a retry within 24 hours get the first answer back instead of sending a second text. The same key with a different text is refused: ApiError 422, error_code IDEMPOTENCY_KEY_REUSED.
+- Scheduled texts: client.send_sms(to, message, send_at=datetime(2026, 11, 16, 9, 0, tzinfo=ZoneInfo("Europe/Bucharest"))), 1 minute to 30 days ahead (a timezone-aware datetime, or an ISO 8601 string with an offset; a naive datetime raises ValueError), returns a ScheduledText (id, send_at, status) instead of a SendResult; client.list_scheduled(), get_scheduled(id), cancel_scheduled(id). Not for sign-in codes.
 - client.send_verification_code(...) (POST /api/v1/sms/send-2fa) is only for sign-in codes: the text must contain a code of 4 to 10 digits standing on its own (e.g. 482913 or 123-456), at most 320 characters; it uses a separate quota.
 - Numbers in international format (+14155550123). default_country_code (e.g. "+40") completes numbers written without + or 00.
 - Limits: 30 send requests a minute, 1600 characters a text.

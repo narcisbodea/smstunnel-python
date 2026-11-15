@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -25,6 +26,9 @@ class Handler(BaseHTTPRequestHandler):
         self.route()
 
     def do_POST(self) -> None:
+        self.route()
+
+    def do_DELETE(self) -> None:
         self.route()
 
     def route(self) -> None:
@@ -162,3 +166,23 @@ def test_the_idempotency_key_reaches_the_server(server: str) -> None:
     assert sent["path"] == "/echo/api/v1/sms/send"
     assert sent["headers"]["idempotency-key"] == "order-1042-shipped"
     assert "idempotency-key" not in plain["headers"]
+
+
+def test_a_scheduled_text_reaches_the_server_with_its_time(server: str) -> None:
+    when = datetime(2026, 11, 16, 9, 0, tzinfo=timezone(timedelta(hours=2)))
+
+    echo = Client(KEY, server + "/echo").send_sms("+14155550123", "Hi", send_at=when).raw
+
+    assert echo["method"] == "POST"
+    assert echo["path"] == "/echo/api/v1/sms/send"
+    assert json.loads(echo["body"]) == {"to": "+14155550123", "message": "Hi", "sendAt": "2026-11-16T09:00:00+02:00"}
+
+
+def test_a_cancel_is_a_delete_without_a_body(server: str) -> None:
+    echo = Client(KEY, server + "/echo").cancel_scheduled("6b0a1c2d3e4f5a6b7c8d9e0f").raw
+
+    assert echo["method"] == "DELETE"
+    assert echo["path"] == "/echo/api/v1/sms/scheduled/6b0a1c2d3e4f5a6b7c8d9e0f"
+    assert echo["body"] is None
+    assert echo["headers"]["x-api-key"] == KEY
+    assert "content-type" not in echo["headers"]

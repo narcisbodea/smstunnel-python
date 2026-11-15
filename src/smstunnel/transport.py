@@ -46,7 +46,7 @@ __all__ = [
 class HttpRequest:
     """One request to SMSTunnel, as the client hands it to a transport."""
 
-    #: ``GET`` or ``POST``.
+    #: ``GET``, ``POST`` or ``DELETE``.
     method: str
     url: str
     headers: Mapping[str, str]

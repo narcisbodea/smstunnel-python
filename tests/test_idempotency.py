@@ -228,7 +228,7 @@ def test_a_key_that_is_not_a_str_is_a_type_error(key: object) -> None:
     client = Client(KEY, transport=transport)
 
     with pytest.raises(TypeError, match="idempotency_key must be a str"):
-        client.send_sms(TO, TEXT, idempotency_key=key)  # type: ignore[arg-type]
+        client.send_sms(TO, TEXT, idempotency_key=key)  # type: ignore[call-overload]
 
     assert transport.requests == []
 

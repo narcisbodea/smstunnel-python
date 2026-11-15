@@ -62,6 +62,24 @@ def test_a_replayed_answer_is_marked_through_httpx() -> None:
     assert result.message_id == "6ae7957285431f6150ce52fc"
 
 
+def test_a_cancel_is_a_delete_through_httpx() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"success": True, "data": {"id": "6b0a1c2d3e4f5a6b7c8d9e0f", "status": "canceled"}}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        text = Client(KEY, transport=HttpxTransport(http)).cancel_scheduled("6b0a1c2d3e4f5a6b7c8d9e0f")
+
+    assert text.status == "canceled"
+    assert seen[0].method == "DELETE"
+    assert str(seen[0].url) == "https://smstunnel.io/api/v1/sms/scheduled/6b0a1c2d3e4f5a6b7c8d9e0f"
+    assert seen[0].content == b""
+
+
 def test_does_not_follow_redirects_and_maps_errors() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/devices":

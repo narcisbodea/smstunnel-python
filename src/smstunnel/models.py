@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from . import _fields as f
 
@@ -18,6 +18,8 @@ __all__ = [
     "MessageStatus",
     "ReceivedMessage",
     "ReceivedMessages",
+    "ScheduledText",
+    "ScheduledTexts",
     "SendResult",
     "Usage",
 ]
@@ -102,6 +104,108 @@ class MessageStatus:
     def is_final(self) -> bool:
         """``True`` once the text will not change any more: delivered, failed or unconfirmed."""
         return (self.delivery_status or self.status) in (self.DELIVERED, self.FAILED, self.UNCONFIRMED)
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledText:
+    """A text your app scheduled: ``send_sms(..., send_at=...)`` answers with one, and ``list_scheduled()``,
+    ``get_scheduled()`` and ``cancel_scheduled()`` read them.
+
+    At ``send_at`` SMSTunnel sends it as if your app called ``send_sms()`` then, with the same API key: the phone, the
+    country code and the day's allowance are those of that moment. Once it went out, ``message_id`` is set: look up
+    its delivery with ``get_message_status()``.
+    """
+
+    #: Waiting for its time (and, when the phone is offline then, for the phone, up to 3 days).
+    SCHEDULED: ClassVar[str] = "scheduled"
+    #: Handed to the phone at its time: ``message_id`` is set.
+    SENT: ClassVar[str] = "sent"
+    #: Not sent: ``error`` says why.
+    FAILED: ClassVar[str] = "failed"
+    CANCELED: ClassVar[str] = "canceled"
+
+    #: Keep it to read or cancel the text (the send's ``scheduledId``).
+    id: str
+    #: The number, as your app gave it.
+    to: str
+    message: str
+    #: When it goes out (SMSTunnel answers in UTC).
+    send_at: datetime | None
+    #: ``scheduled``, ``sent``, ``failed`` or ``canceled``.
+    status: str = "scheduled"
+    #: The phone your app named, or ``None``: SMSTunnel picks one at its time.
+    device_id: str | None = None
+    #: Once it went out: the text's id, for ``get_message_status()``.
+    message_id: str | None = None
+    #: Why it failed: ``limit_reached``, ``key_not_active``, ``invalid_number``, ``phone_not_found``,
+    #: ``phone_unlinked``, ``sealed_only_phone``, ``number_not_allowed``, ``account_not_active``, ``interrupted`` or
+    #: ``failed``.
+    error: str | None = None
+    created_at: datetime | None = None
+    #: The whole object.
+    raw: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    #: From ``send_sms(..., send_at=...)`` only: ``True`` when SMSTunnel answered a repeat of the ``idempotency_key``
+    #: with the first answer, so this call scheduled no new text.
+    replayed: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any], *, replayed: bool = False) -> ScheduledText:
+        """From one scheduled text: the ``data`` of ``GET /api/v1/sms/scheduled/:id``, or an item of the list."""
+        return cls(
+            id=f.string(data, "id"),
+            to=f.string(data, "to"),
+            message=f.string(data, "message"),
+            send_at=f.moment(data, "sendAt"),
+            status=f.string(data, "status", cls.SCHEDULED),
+            device_id=f.opt_string(data, "deviceId"),
+            message_id=f.opt_string(data, "messageId"),
+            error=f.opt_string(data, "error"),
+            created_at=f.moment(data, "createdAt"),
+            raw=dict(data),
+            replayed=replayed,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledTexts:
+    """One page of the texts your API key scheduled. Iterate it, or read ``items``."""
+
+    #: The texts still waiting, soonest first.
+    WAITING: ClassVar[Literal["waiting"]] = "waiting"
+    #: The texts that went out, failed or were canceled in the last 30 days, newest first.
+    DONE: ClassVar[Literal["done"]] = "done"
+
+    items: tuple[ScheduledText, ...]
+    #: The key's texts in this scope, on every page.
+    total: int
+    page: int
+    limit: int
+    #: The texts waiting in the whole account, from every key and the dashboard.
+    waiting: int
+    #: How many texts the plan lets wait at once.
+    max: int
+    #: The whole ``data`` object.
+    raw: Mapping[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> ScheduledTexts:
+        """From the ``data`` object of ``GET /api/v1/sms/scheduled``."""
+        return cls(
+            items=tuple(ScheduledText.from_dict(item) for item in f.objects(data, "items")),
+            total=f.integer(data, "total"),
+            page=f.integer(data, "page", 1),
+            limit=f.integer(data, "limit"),
+            waiting=f.integer(data, "waiting"),
+            max=f.integer(data, "max"),
+            raw=dict(data),
+        )
+
+    def __iter__(self) -> Iterator[ScheduledText]:
+        return iter(self.items)
+
+    def __len__(self) -> int:
+        """The texts on this page (``total`` counts all of them)."""
+        return len(self.items)
 
 
 @dataclass(frozen=True, slots=True)

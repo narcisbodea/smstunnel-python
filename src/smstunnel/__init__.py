@@ -27,6 +27,8 @@ from .models import (
     MessageStatus,
     ReceivedMessage,
     ReceivedMessages,
+    ScheduledText,
+    ScheduledTexts,
     SendResult,
     Usage,
 )
@@ -44,6 +46,8 @@ __all__ = [
     "RateLimitError",
     "ReceivedMessage",
     "ReceivedMessages",
+    "ScheduledText",
+    "ScheduledTexts",
     "SendResult",
     "SmsTunnelError",
     "TransportError",
