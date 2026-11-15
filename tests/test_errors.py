@@ -23,6 +23,8 @@ from smstunnel.errors import error_from_response
         (401, AuthenticationError),
         (403, PermissionDeniedError),
         (404, ApiError),
+        (409, ApiError),
+        (422, ApiError),
         (429, RateLimitError),
         (500, ApiError),
     ],
@@ -111,6 +113,14 @@ class TestRetryAfter:
 
         assert isinstance(error, RateLimitError)
         assert error.retry_after is None
+
+    def test_is_on_every_api_error_such_as_a_key_still_in_progress(self) -> None:
+        error = error_from_response(409, {"code": "IDEMPOTENCY_KEY_IN_PROGRESS"}, {"Retry-After": "1"})
+
+        assert type(error) is ApiError
+        assert error.error_code == "IDEMPOTENCY_KEY_IN_PROGRESS"
+        assert error.retry_after == 1.0
+        assert error_from_response(500, None).retry_after is None
 
 
 def test_repr_shows_status_code_and_message() -> None:

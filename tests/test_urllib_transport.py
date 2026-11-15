@@ -151,3 +151,14 @@ def test_the_client_end_to_end_over_http(server: str) -> None:
     assert usage.raw["path"] == "/echo/api/v1/account/usage"
     assert usage.raw["headers"]["x-api-key"] == KEY
     assert usage.raw["headers"]["user-agent"].startswith("smstunnel-python/")
+
+
+def test_the_idempotency_key_reaches_the_server(server: str) -> None:
+    client = Client(KEY, server + "/echo")
+
+    sent = client.send_sms("+14155550123", "Hi", idempotency_key="order-1042-shipped").raw["data"]
+    plain = client.send_sms("+14155550123", "Hi").raw["data"]
+
+    assert sent["path"] == "/echo/api/v1/sms/send"
+    assert sent["headers"]["idempotency-key"] == "order-1042-shipped"
+    assert "idempotency-key" not in plain["headers"]

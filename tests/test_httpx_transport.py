@@ -36,6 +36,21 @@ def test_sends_through_an_httpx_client() -> None:
     assert json.loads(seen[0].content) == {"to": "+14155550123", "message": "Hi from httpx"}
 
 
+def test_the_idempotency_key_goes_through_httpx() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=SENT)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        client = Client(KEY, transport=HttpxTransport(http))
+        client.send_verification_code("+14155550123", "Your sign-in code is 482913", idempotency_key="sign-in-77")
+
+    assert str(seen[0].url) == "https://smstunnel.io/api/v1/sms/send-2fa"
+    assert seen[0].headers["idempotency-key"] == "sign-in-77"
+
+
 def test_does_not_follow_redirects_and_maps_errors() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/devices":

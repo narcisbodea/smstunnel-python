@@ -19,6 +19,9 @@ DEFAULT_TIMEOUT = 30.0
 
 _BASE_URL = re.compile(r"https?://[^/\s?#]+(/[^\s?#]*)?", re.IGNORECASE)
 _USER_AGENT = f"smstunnel-python/{__version__} Python/{platform.python_version()}"
+# What SMSTunnel accepts as an Idempotency-Key (printable ASCII, at most 255), without spaces at the ends: the server
+# trims them, and a key of spaces only would silently mean no key at all.
+_IDEMPOTENCY_KEY = re.compile(r"[\x21-\x7e](?:[\x20-\x7e]{0,253}[\x21-\x7e])?")
 
 
 class Core:
@@ -46,9 +49,12 @@ class Core:
             path += "?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
         return HttpRequest("GET", self.base_url + path, self._headers(json_body=False), None, self.timeout)
 
-    def post(self, path: str, body: Mapping[str, str]) -> HttpRequest:
+    def post(self, path: str, body: Mapping[str, str], *, idempotency_key: str | None = None) -> HttpRequest:
+        headers = self._headers(json_body=True)
+        # Checked here, before a request exists: a bad key raises and nothing is sent.
+        headers.update(idempotency_header(idempotency_key))
         payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        return HttpRequest("POST", self.base_url + path, self._headers(json_body=True), payload, self.timeout)
+        return HttpRequest("POST", self.base_url + path, headers, payload, self.timeout)
 
     def _headers(self, *, json_body: bool) -> dict[str, str]:
         headers = {
@@ -107,6 +113,24 @@ def send_body(to: str, message: str, device_id: str | None, default_country_code
     if default_country_code is not None and default_country_code.strip():
         body["defaultCountryCode"] = default_country_code.strip()
     return body
+
+
+def idempotency_header(key: object) -> dict[str, str]:
+    """The ``Idempotency-Key`` header for ``key``, none when it is ``None``.
+
+    :raises TypeError: when the key is not a ``str``.
+    :raises ValueError: when it is not 1 to 255 printable ASCII characters without spaces at the ends.
+    """
+    if key is None:
+        return {}
+    if not isinstance(key, str):
+        raise TypeError(f"idempotency_key must be a str, such as str(uuid.uuid4()), not {type(key).__name__}.")
+    if not _IDEMPOTENCY_KEY.fullmatch(key):
+        raise ValueError(
+            "idempotency_key must be 1 to 255 printable ASCII characters, without spaces at the ends "
+            "(a UUID is a good choice)."
+        )
+    return {"Idempotency-Key": key}
 
 
 def status_path(message_id: str) -> str:

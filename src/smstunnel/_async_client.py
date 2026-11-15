@@ -20,7 +20,8 @@ class AsyncClient:
 
     It sends through httpx when httpx is installed (``pip install "smstunnel[httpx]"``), and otherwise runs
     the standard-library transport in a worker thread. Close it with ``await client.aclose()`` or use
-    ``async with``.
+    ``async with``. Like the sync client, it never retries on its own: give a send an ``idempotency_key`` to
+    retry it safely.
     """
 
     def __init__(
@@ -46,10 +47,12 @@ class AsyncClient:
         *,
         device_id: str | None = None,
         default_country_code: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult:
         """Sends one text to one number, from your phone. See :meth:`smstunnel.Client.send_sms`."""
         body = send_body(to, message, device_id, default_country_code)
-        return SendResult.from_dict(await self._call(self._core.post("/api/v1/sms/send", body)))
+        request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
+        return SendResult.from_dict(await self._call(request))
 
     async def send_verification_code(
         self,
@@ -58,10 +61,12 @@ class AsyncClient:
         *,
         device_id: str | None = None,
         default_country_code: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult:
         """Sends a sign-in or verification code. See :meth:`smstunnel.Client.send_verification_code`."""
         body = send_body(to, message, device_id, default_country_code)
-        return SendResult.from_dict(await self._call(self._core.post("/api/v1/sms/send-2fa", body)))
+        request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
+        return SendResult.from_dict(await self._call(request))
 
     async def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. See :meth:`smstunnel.Client.get_message_status`."""

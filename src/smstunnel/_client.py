@@ -26,6 +26,9 @@ class Client:
     :class:`~smstunnel.RateLimitError` for 429) and :class:`~smstunnel.TransportError` when SMSTunnel cannot be
     reached. A client is safe to share between threads.
 
+    The client never retries on its own. To retry a send safely, give it an ``idempotency_key`` (see
+    :meth:`send_sms`).
+
     :param api_key: an API key from your SMSTunnel dashboard (``sk_live_...``). Keep it in an environment
         variable, never in your code.
     :param base_url: change it only for a self-hosted SMSTunnel or a test server.
@@ -57,6 +60,7 @@ class Client:
         *,
         device_id: str | None = None,
         default_country_code: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult:
         """Sends one text to one number, from your phone.
 
@@ -65,10 +69,19 @@ class Client:
         :param device_id: send through this phone (see :meth:`get_devices`); ``None`` lets SMSTunnel pick one
             of yours.
         :param default_country_code: e.g. ``"+40"``: completes numbers given without ``+`` or ``00``.
-        :raises ValueError: when the number or the text is empty.
+        :param idempotency_key: makes the call safe to retry. It goes out as the ``Idempotency-Key`` header. For
+            24 hours, a repeat of the call with the same key gets the first answer back (the same message id)
+            instead of a second text; the same key with a different text, number, phone or country code is
+            refused (:class:`~smstunnel.ApiError` 422, ``error_code`` ``IDEMPOTENCY_KEY_REUSED``). Use one new key
+            per text and the same key on every retry of it: ``str(uuid.uuid4())``, or your own id such as
+            ``"order-1042-shipped"``. 1 to 255 printable ASCII characters, no spaces at the ends.
+        :raises ValueError: when the number or the text is empty, or the key is not 1 to 255 printable ASCII
+            characters without spaces at the ends.
+        :raises TypeError: when the key is not a ``str``.
         """
         body = send_body(to, message, device_id, default_country_code)
-        return SendResult.from_dict(self._call(self._core.post("/api/v1/sms/send", body)))
+        request = self._core.post("/api/v1/sms/send", body, idempotency_key=idempotency_key)
+        return SendResult.from_dict(self._call(request))
 
     def send_verification_code(
         self,
@@ -77,6 +90,7 @@ class Client:
         *,
         device_id: str | None = None,
         default_country_code: str | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult:
         """Sends a sign-in or verification code.
 
@@ -84,10 +98,13 @@ class Client:
         ``123-456``); SMSTunnel refuses it otherwise (400). Up to 320 characters. It counts against the
         separate verification-code quota.
 
-        :raises ValueError: when the number or the text is empty.
+        :param idempotency_key: as in :meth:`send_sms`: a retry with the same key can't send the code twice.
+        :raises ValueError: when the number or the text is empty, or the key is not a valid key.
+        :raises TypeError: when the key is not a ``str``.
         """
         body = send_body(to, message, device_id, default_country_code)
-        return SendResult.from_dict(self._call(self._core.post("/api/v1/sms/send-2fa", body)))
+        request = self._core.post("/api/v1/sms/send-2fa", body, idempotency_key=idempotency_key)
+        return SendResult.from_dict(self._call(request))
 
     def get_message_status(self, message_id: str) -> MessageStatus:
         """Where a text is now. Needs a key with the ``sms:read`` permission.

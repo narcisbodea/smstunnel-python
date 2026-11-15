@@ -44,6 +44,7 @@ class ApiError(SmsTunnelError):
     - ``error_code``: SMSTunnel's own code when it sends one, such as ``PERMISSION_REQUIRED``.
     - ``message`` (also ``str(error)``): what went wrong, in SMSTunnel's words.
     - ``body``: the decoded answer (a dict), the raw text when it was not JSON, or ``None`` when it was empty.
+    - :attr:`retry_after`: the seconds to wait before trying again, when SMSTunnel says.
 
     Statuses worth handling, each with its own subclass:
 
@@ -52,7 +53,11 @@ class ApiError(SmsTunnelError):
     - 429 :class:`RateLimitError`: too many requests; wait and try again.
 
     Others: 400 (SMSTunnel refused a field, for example a number it cannot read, or a verification text
-    without a code), 404 (no such message or phone for this key), 5xx (a problem on SMSTunnel's side).
+    without a code), 404 (no such message or phone for this key), 409 with ``error_code``
+    ``IDEMPOTENCY_KEY_IN_PROGRESS`` (the first try with this ``idempotency_key`` is still running: try again
+    after :attr:`retry_after` seconds to get its answer), 422 with ``error_code`` ``IDEMPOTENCY_KEY_REUSED``
+    (this ``idempotency_key`` was already used for a different text; nothing was sent), 5xx (a problem on
+    SMSTunnel's side).
     """
 
     def __init__(
@@ -71,6 +76,24 @@ class ApiError(SmsTunnelError):
         self.body = body
         #: The response headers, names in lower case.
         self.headers: dict[str, str] = {name.lower(): value for name, value in (headers or {}).items()}
+
+    @property
+    def retry_after(self) -> float | None:
+        """Seconds to wait before trying again, when SMSTunnel says (the ``Retry-After`` header).
+
+        Set on a 429 for too many requests and on a 409 while the first try with the same ``idempotency_key`` is
+        still running; ``None`` when SMSTunnel sent none, for example on a 429 for a daily limit.
+        """
+        value = self.headers.get("retry-after", "").strip()
+        if not value:
+            return None
+        if _SECONDS.fullmatch(value):
+            return float(value)
+        try:
+            moment = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, moment.timestamp() - time.time())
 
     def __repr__(self) -> str:
         return (
@@ -105,21 +128,10 @@ class PermissionDeniedError(ApiError):
 
 
 class RateLimitError(ApiError):
-    """429: too many requests in a short time (sending allows 30 requests a minute), or a daily limit is reached."""
+    """429: too many requests in a short time (sending allows 30 requests a minute), or a daily limit is reached.
 
-    @property
-    def retry_after(self) -> float | None:
-        """Seconds to wait before trying again, when SMSTunnel says (the ``Retry-After`` header)."""
-        value = self.headers.get("retry-after", "").strip()
-        if not value:
-            return None
-        if _SECONDS.fullmatch(value):
-            return float(value)
-        try:
-            moment = email.utils.parsedate_to_datetime(value)
-        except (TypeError, ValueError):
-            return None
-        return max(0.0, moment.timestamp() - time.time())
+    :attr:`retry_after` says how long to wait after too many requests; it is ``None`` for a daily limit.
+    """
 
 
 _FALLBACK = "SMSTunnel returned error: {status}"

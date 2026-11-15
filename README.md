@@ -48,6 +48,7 @@ result = client.send_sms(
     "See you at 10:30.",          # up to 1600 characters
     device_id=None,               # a phone id from get_devices(), or None to let SMSTunnel pick one of yours
     default_country_code=None,    # e.g. "+40": completes numbers given without + or 00
+    idempotency_key=None,         # e.g. "order-1042-shipped": a retry with the same key can't send it twice
 )
 
 result.message_id  # str
@@ -151,7 +152,7 @@ Every call raises a `smstunnel.SmsTunnelError` when it does not go through:
 | `AuthenticationError` (401) | The API key is wrong, was deleted, or its account is suspended. |
 | `PermissionDeniedError` (403) | The key lacks a permission (`error_code` is `PERMISSION_REQUIRED`, `permission` names it, e.g. `sms:inbox`), or the plan does not include the feature. |
 | `RateLimitError` (429) | Too many requests. `retry_after` gives the seconds to wait, when SMSTunnel says. |
-| `ApiError` | Any other error answer: 400 (a number it cannot read, a verification text without a code), 404 (no such message), 5xx. The three above extend it. |
+| `ApiError` | Any other error answer: 400 (a number it cannot read, a verification text without a code), 404 (no such message), 409 and 422 for an `idempotency_key` (see [Retrying safely](#retrying-safely)), 5xx. The three above extend it. |
 | `TransportError` | SMSTunnel could not be reached (DNS, TLS, timeout). |
 
 ```python
@@ -170,7 +171,39 @@ except TransportError:
     ...  # network problem: try again later
 ```
 
-`message` (also `str(error)`) is SMSTunnel's own explanation, `status_code` the HTTP status, `body` the decoded answer. An empty number or text raises `ValueError` before anything is sent.
+`message` (also `str(error)`) is SMSTunnel's own explanation, `status_code` the HTTP status, `body` the decoded answer, and `retry_after` the seconds to wait when SMSTunnel says. An empty number or text raises `ValueError` before anything is sent.
+
+## Retrying safely
+
+The client never retries on its own. To retry a text without risking a second copy, give the send an `idempotency_key`: one new key per text, and the same key on every retry of that text. It goes out as the `Idempotency-Key` header, and for 24 hours SMSTunnel answers a repeat with its first answer (the same `message_id`) instead of sending the text again.
+
+```python
+import time
+import uuid
+
+from smstunnel import ApiError, TransportError
+
+key = str(uuid.uuid4())  # or your own id for this text, e.g. "order-1042-shipped"
+
+for attempt in range(3):
+    try:
+        result = client.send_sms("+14155550123", "Your order #1042 has shipped.", idempotency_key=key)
+        break
+    except TransportError:
+        if attempt == 2:
+            raise
+        time.sleep(2)  # no answer came, so the text may or may not have gone out: try again with the same key
+    except ApiError as error:
+        if error.retry_after is None or attempt == 2:
+            raise  # a refusal: the same call would be refused again
+        time.sleep(error.retry_after)  # 429 too many requests, or 409 while the first try is still running
+```
+
+- `send_verification_code()` and the `AsyncClient` methods take `idempotency_key` too.
+- The same key with a different text, number, phone or country code gets an `ApiError` with `status_code` 422 and `error_code` `IDEMPOTENCY_KEY_REUSED`, and nothing goes out.
+- A refusal (4xx) means nothing went out: fix the cause, then retry with the same key. A server error (5xx) is kept with the key, because the text may have gone out before it: a retry gets the same error back. Check your dashboard before you send that text again with a new key.
+- A key is 1 to 255 printable ASCII characters, without spaces at the ends. Anything else raises `ValueError` (`TypeError` when it is not a `str`) before anything is sent.
+- SMSTunnel remembers a key for 24 hours: a retry after that sends the text again.
 
 ## Django
 
@@ -300,8 +333,9 @@ I want my Python app to send texts with SMSTunnel. SMSTunnel sends each text fro
 
 Use the SMSTunnel package: `pip install smstunnel`, then `client = smstunnel.Client(os.environ["SMSTUNNEL_API_KEY"])`.
 API facts:
-- client.send_sms(to, message, device_id=None, default_country_code=None) calls POST https://smstunnel.io/api/v1/sms/send with the header X-API-Key and the JSON body {"to", "message", "deviceId"?, "defaultCountryCode"?}. It returns message_id and queued.
+- client.send_sms(to, message, device_id=None, default_country_code=None, idempotency_key=None) calls POST https://smstunnel.io/api/v1/sms/send with the header X-API-Key (and Idempotency-Key when given) and the JSON body {"to", "message", "deviceId"?, "defaultCountryCode"?}. It returns message_id and queued.
 - One recipient per call. To text several people, call it once per number.
+- Retries: the client never retries on its own. idempotency_key (one new key per text, such as str(uuid.uuid4()), the same on every retry of that text) makes a retry within 24 hours get the first answer back instead of sending a second text. The same key with a different text is refused: ApiError 422, error_code IDEMPOTENCY_KEY_REUSED.
 - client.send_verification_code(...) (POST /api/v1/sms/send-2fa) is only for sign-in codes: the text must contain a code of 4 to 10 digits standing on its own (e.g. 482913 or 123-456), at most 320 characters; it uses a separate quota.
 - Numbers in international format (+14155550123). default_country_code (e.g. "+40") completes numbers written without + or 00.
 - Limits: 30 send requests a minute, 1600 characters a text.
@@ -312,7 +346,7 @@ What I want: [describe what should send a text, to whom, and when]
 
 Rules:
 - Read the API key from an environment variable or the platform's secret store. Never put it in source code, in the repository or in client-side code.
-- Validate phone numbers before sending, and handle every error above: log it clearly, don't retry 401/403, wait and retry 429.
+- Validate phone numbers before sending, and handle every error above: log it clearly, don't retry 401/403, wait retry_after and retry 429. Retry a send only with the same idempotency_key, so the same text never goes out twice.
 - Only send texts people expect (alerts to myself, reminders, sign-in codes, order updates).
 ```
 
