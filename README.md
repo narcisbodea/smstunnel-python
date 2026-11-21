@@ -110,11 +110,13 @@ status.status           # "pending", "sent", "delivered" or "failed"
 status.delivery_status  # the same, or "unconfirmed": handed to the SIM but the phone got no confirmation
 status.sent_at          # a datetime (UTC), or None
 status.error_message    # why it failed, or None
-status.is_final         # True once it will not change any more
+status.is_final         # True once there is nothing more to wait for: sent, delivered, failed or unconfirmed
 
 if status.status == MessageStatus.FAILED:
     ...
 ```
+
+`sent` is the last good status today: the SMSTunnel app gets no delivery reports, so a text that went out stays `sent`. `delivered` is reserved.
 
 ### Read received texts
 

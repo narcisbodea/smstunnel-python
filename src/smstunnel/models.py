@@ -63,7 +63,10 @@ class MessageStatus:
     """Where a text is now."""
 
     PENDING: ClassVar[str] = "pending"
+    #: The phone sent it. The last good status today: the app gets no delivery reports, so a text that went out stays
+    #: ``sent``.
     SENT: ClassVar[str] = "sent"
+    #: Reserved for a delivery report. The app gets none today, so the texts you send don't reach this status.
     DELIVERED: ClassVar[str] = "delivered"
     FAILED: ClassVar[str] = "failed"
     #: Handed to the SIM, but the phone got no confirmation. Final: SMSTunnel never retries it.
@@ -79,6 +82,7 @@ class MessageStatus:
     #: ``True`` when the phone handed the text to the SIM but got no confirmation.
     unconfirmed: bool = False
     sent_at: datetime | None = None
+    #: Reserved, like ``DELIVERED``: ``None`` for the texts you send today.
     delivered_at: datetime | None = None
     #: Why it failed, or ``None``.
     error_message: str | None = None
@@ -102,8 +106,11 @@ class MessageStatus:
 
     @property
     def is_final(self) -> bool:
-        """``True`` once the text will not change any more: delivered, failed or unconfirmed."""
-        return (self.delivery_status or self.status) in (self.DELIVERED, self.FAILED, self.UNCONFIRMED)
+        """``True`` once there is nothing more to wait for: sent, delivered, failed or unconfirmed.
+
+        A text the phone sent stays ``sent``, because the app gets no delivery reports.
+        """
+        return (self.delivery_status or self.status) in (self.SENT, self.DELIVERED, self.FAILED, self.UNCONFIRMED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +120,7 @@ class ScheduledText:
 
     At ``send_at`` SMSTunnel sends it as if your app called ``send_sms()`` then, with the same API key: the phone, the
     country code and the day's allowance are those of that moment. Once it went out, ``message_id`` is set: look up
-    its delivery with ``get_message_status()``.
+    its status with ``get_message_status()``.
     """
 
     #: Waiting for its time (and, when the phone is offline then, for the phone, up to 3 days).

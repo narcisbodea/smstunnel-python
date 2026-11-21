@@ -150,7 +150,7 @@ class TestMessageStatus:
         assert status.sent_at == datetime(2026, 11, 1, 19, 39, 30, 329000, tzinfo=timezone.utc)
         assert status.delivered_at is None
         assert status.error_message is None
-        assert status.is_final is False
+        assert status.is_final is True
 
     def test_escapes_the_id_in_the_path(self) -> None:
         client, transport = client_with(STATUS)
@@ -175,6 +175,22 @@ class TestMessageStatus:
         assert status.unconfirmed is True
         assert status.delivery_status == MessageStatus.UNCONFIRMED
         assert status.is_final is True
+
+    @pytest.mark.parametrize(
+        ("state", "final"),
+        [
+            ("pending", False),
+            ("sent", True),
+            ("delivered", True),
+            ("failed", True),
+            ("unconfirmed", True),
+            ("queued", False),
+            ("read-by-martians", False),
+        ],
+    )
+    def test_is_final_for_every_state(self, state: str, final: bool) -> None:
+        assert MessageStatus(id="m", phone_number="+1", status=state).is_final is final
+        assert MessageStatus(id="m", phone_number="+1", status="pending", delivery_status=state).is_final is final
 
     def test_refuses_an_empty_id(self) -> None:
         client, transport = client_with()
